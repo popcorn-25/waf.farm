@@ -287,7 +287,7 @@ restart_services() {
   step "重启 waf.farm 服务"
   systemctl daemon-reload
   validate_installed_caddy_config
-  systemctl enable waf-farm-agent caddy waf-farm >/dev/null
+  systemctl enable waf-farm-agent caddy waf-farm waf-farm-firewall >/dev/null
   for service in waf-farm-agent caddy waf-farm; do
     restart_install_service "$service"
     success "$service 服务已启动"
@@ -495,6 +495,7 @@ install_or_update() {
     systemd/waf-farm-agent.service \
     systemd/caddy.service \
     systemd/waf-farm-docker-bridge-guard.service \
+    systemd/waf-farm-firewall.service \
     caddy/Caddyfile \
     caddy/caddy \
     caddy/caddy.sha256 \
@@ -576,6 +577,7 @@ install_or_update() {
   write_unit "$package/systemd/waf-farm-agent.service" /etc/systemd/system/waf-farm-agent.service "$root"
   write_unit "$package/systemd/caddy.service" /etc/systemd/system/caddy.service "$root"
   write_unit "$package/systemd/waf-farm-docker-bridge-guard.service" /etc/systemd/system/waf-farm-docker-bridge-guard.service "$root"
+  write_unit "$package/systemd/waf-farm-firewall.service" /etc/systemd/system/waf-farm-firewall.service "$root"
   restart_services
   systemctl enable waf-farm-docker-bridge-guard.service >/dev/null 2>&1 || true
   # Docker 由用户在应用商店里按需安装：未安装时该单元无事可做（守护脚本自行跳过），
@@ -622,6 +624,7 @@ uninstall_panel() {
   step "停止并移除 waf.farm 服务"
   stop_and_disable waf-farm.service
   stop_and_disable waf-farm-agent.service
+  stop_and_disable waf-farm-firewall.service
   stop_and_disable caddy.service
   stop_and_disable waf-farm-mysql.service
   stop_and_disable waf-farm-mariadb.service
@@ -630,7 +633,7 @@ uninstall_panel() {
     stop_and_disable "$(basename "$path")"
     rm -f "$path"
   done
-  rm -f /etc/systemd/system/waf-farm.service /etc/systemd/system/waf-farm-agent.service /etc/systemd/system/caddy.service /etc/systemd/system/waf-farm-mysql.service /etc/systemd/system/waf-farm-mariadb.service
+  rm -f /etc/systemd/system/waf-farm.service /etc/systemd/system/waf-farm-agent.service /etc/systemd/system/waf-farm-firewall.service /etc/systemd/system/caddy.service /etc/systemd/system/waf-farm-mysql.service /etc/systemd/system/waf-farm-mariadb.service
   systemctl daemon-reload
   if [ "$purge" = true ]; then
     rm -rf "$root"
