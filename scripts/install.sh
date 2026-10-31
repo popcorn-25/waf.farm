@@ -583,7 +583,7 @@ install_or_update() {
   # Docker 由用户在应用商店里按需安装：未安装时该单元无事可做（守护脚本自行跳过），
   # 因此只在 docker 服务存在时才立即启动，避免安装流程因依赖缺失而失败。
   if systemctl cat docker.service >/dev/null 2>&1; then
-    systemctl restart waf-farm-docker-bridge-guard.service || echo "警告: Docker 网桥自愈未成功，详见 journalctl -u waf-farm-docker-bridge-guard" >&2
+    systemctl restart waf-farm-docker-bridge-guard.service || echo "警告: Docker 网桥与数据库监听守护未成功，详见 journalctl -u waf-farm-docker-bridge-guard" >&2
   fi
   install -m 0644 "$package/VERSION" "$root/VERSION"
   chown root:root "$root/VERSION"
