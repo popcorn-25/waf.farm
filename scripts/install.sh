@@ -228,11 +228,18 @@ ensure_port_available() {
 
 validate_panel_port() {
   port=$1
-  case "$port" in
-    80) fail "端口 80 由 Caddy HTTP 站点服务保留，请为 waf.farm 内部服务选择其他端口" ;;
-    443) fail "端口 443 由 Caddy HTTPS 站点服务保留，请为 waf.farm 内部服务选择其他端口" ;;
-    2020) fail "端口 2020 由 waf.farm 访问日志服务保留，请为面板内部服务选择其他端口" ;;
-  esac
+  http_site_port=${2:-80}
+  https_site_port=${3:-443}
+  [ "$port" != "$http_site_port" ] || fail "端口 $port 由 Caddy HTTP 站点服务保留，请为 waf.farm 内部服务选择其他端口"
+  [ "$port" != "$https_site_port" ] || fail "端口 $port 由 Caddy HTTPS 站点服务保留，请为 waf.farm 内部服务选择其他端口"
+  [ "$port" != 2020 ] || fail "端口 2020 由 waf.farm 访问日志服务保留，请为面板内部服务选择其他端口"
+}
+
+validate_site_port() {
+  port=$1
+  purpose=$2
+  case "$port" in *[!0-9]*|'') echo "$purpose 端口必须是 1-65535 的整数" >&2; exit 1 ;; esac
+  [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo "$purpose 端口必须是 1-65535" >&2; exit 1; }
 }
 
 write_initial_config() {
@@ -382,13 +389,15 @@ bootstrap_admin() {
   port=$2
   login_name=$3
   login_password=$4
+  site_http_port=$5
+  site_https_port=$6
   [ -f "$root/data/waf-farm.db" ] && return
   command -v curl >/dev/null || return
   info "等待面板服务监听 127.0.0.1:$port"
   wait_for_panel_endpoint "$port" '"installed":false' 60
   account=$(json_escape "$login_name")
   password=$(json_escape "$login_password")
-  payload=$(printf '{"dataDir":"%s/data","adminUrl":"unix://%s/run/caddy/admin.sock","panelUpstream":"127.0.0.1:%s","logListen":"127.0.0.1:2020","logTarget":"127.0.0.1:2020","staticRoot":"%s/sites","panelDomain":"","siteName":"waf.farm","adminName":"系统管理员","adminEmail":"%s","adminPassword":"%s","cookieSecure":false}' "$(json_escape "$root")" "$(json_escape "$root")" "$port" "$(json_escape "$root")" "$account" "$password")
+  payload=$(printf '{"dataDir":"%s/data","adminUrl":"unix://%s/run/caddy/admin.sock","panelUpstream":"127.0.0.1:%s","logListen":"127.0.0.1:2020","logTarget":"127.0.0.1:2020","staticRoot":"%s/sites","panelDomain":"","siteName":"waf.farm","adminName":"系统管理员","adminEmail":"%s","adminPassword":"%s","cookieSecure":false,"caddyHttpPort":%s,"caddyHttpsPort":%s}' "$(json_escape "$root")" "$(json_escape "$root")" "$port" "$(json_escape "$root")" "$account" "$password" "$site_http_port" "$site_https_port")
   if ! response=$(curl -sS -X POST "http://127.0.0.1:$port/api/v1/install" -H 'Content-Type: application/json' --data "$payload" -w '\n%{http_code}'); then
     fail "管理员初始化请求失败，请检查：journalctl -u waf-farm -n 100"
   fi
@@ -410,6 +419,8 @@ install_or_update() {
   version=${WAF_FARM_VERSION:-}
   version=${version#v}
   panel_port=${WAF_FARM_PORT:-}
+  caddy_http_port=${WAF_FARM_CADDY_HTTP_PORT:-}
+  caddy_https_port=${WAF_FARM_CADDY_HTTPS_PORT:-}
   admin_login=${WAF_FARM_ADMIN:-}
   admin_password=${WAF_FARM_PASSWORD:-}
   install_dir=${WAF_FARM_INSTALL_DIR:-}
@@ -431,10 +442,15 @@ install_or_update() {
     [ -n "$panel_port" ] || panel_port=$(prompt_value "waf.farm 内部服务端口" "18081")
     case "$panel_port" in *[!0-9]*|'') echo "端口必须是 1-65535 的整数" >&2; exit 1;; esac
     [ "$panel_port" -ge 1 ] && [ "$panel_port" -le 65535 ] || { echo "端口必须是 1-65535" >&2; exit 1; }
-    validate_panel_port "$panel_port"
+    [ -n "$caddy_http_port" ] || caddy_http_port=$(prompt_value "Caddy HTTP 站点端口" "80")
+    [ -n "$caddy_https_port" ] || caddy_https_port=$(prompt_value "Caddy HTTPS 站点端口" "443")
+    validate_site_port "$caddy_http_port" "Caddy HTTP"
+    validate_site_port "$caddy_https_port" "Caddy HTTPS"
+    [ "$caddy_http_port" != "$caddy_https_port" ] || fail "Caddy HTTP 与 HTTPS 端口不能相同"
+    validate_panel_port "$panel_port" "$caddy_http_port" "$caddy_https_port"
     ensure_port_available "$panel_port" "面板"
-    ensure_port_available 80 "Caddy HTTP"
-    ensure_port_available 443 "Caddy HTTPS"
+    ensure_port_available "$caddy_http_port" "Caddy HTTP"
+    ensure_port_available "$caddy_https_port" "Caddy HTTPS"
     [ -n "$admin_login" ] || admin_login=$(prompt_value "登录账号（作为邮箱使用）" "admin@localhost")
     [ -n "$admin_login" ] || { echo "登录账号不能为空" >&2; exit 1; }
     [ -n "$admin_password" ] || admin_password=$(prompt_password)
@@ -518,8 +534,8 @@ install_or_update() {
   if [ "$mode" = "install" ]; then
     step "再次确认服务端口"
     ensure_port_available "$panel_port" "面板"
-    ensure_port_available 80 "Caddy HTTP"
-    ensure_port_available 443 "Caddy HTTPS"
+    ensure_port_available "$caddy_http_port" "Caddy HTTP"
+    ensure_port_available "$caddy_https_port" "Caddy HTTPS"
   fi
 
   step "安装 waf.farm $version"
@@ -589,7 +605,7 @@ install_or_update() {
   chown root:root "$root/VERSION"
   chmod 0644 "$root/VERSION"
   if [ "$mode" = "install" ]; then
-    bootstrap_admin "$root" "$panel_port" "$admin_login" "$admin_password"
+    bootstrap_admin "$root" "$panel_port" "$admin_login" "$admin_password" "$caddy_http_port" "$caddy_https_port"
     access_host=服务器IP
     if detected_ip=$(public_ipv4); then
       access_host=$detected_ip
@@ -598,7 +614,7 @@ install_or_update() {
     fi
     line
     success "waf.farm $version 安装完成"
-    printf '访问地址: http://%s:%s\n安装目录: %s\n登录账号: %s\n' "$access_host" "$panel_port" "$root" "$admin_login"
+    printf '访问地址: http://%s:%s\n安装目录: %s\n登录账号: %s\n站点端口: HTTP %s / HTTPS %s\n' "$access_host" "$panel_port" "$root" "$admin_login" "$caddy_http_port" "$caddy_https_port"
     line
   else
     success "waf.farm $version 更新完成"
